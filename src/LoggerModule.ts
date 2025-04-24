@@ -1,6 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { IncomingMessage, ServerResponse } from 'node:http';
-
 import {
   Global,
   Module,
@@ -21,7 +19,6 @@ import {
   PARAMS_PROVIDER_TOKEN,
 } from './params';
 import { PinoLogger } from './PinoLogger';
-import { Store, storage } from './storage';
 
 /**
  * As NestJS@11 still supports express@4 `*`-style routing by itself let's keep
@@ -76,24 +73,19 @@ export class LoggerModule implements NestModule {
   constructor(@Inject(PARAMS_PROVIDER_TOKEN) private readonly params: Params) {}
 
   configure(consumer: MiddlewareConsumer) {
-    const {
-      exclude,
-      forRoutes = DEFAULT_ROUTES,
-      pinoHttp,
-      useExisting,
-      assignResponse,
-    } = this.params;
+    const { exclude, forRoutes = DEFAULT_ROUTES, pinoHttp } = this.params;
 
-    const middlewares = createLoggerMiddlewares(
-      pinoHttp || {},
-      useExisting,
-      assignResponse,
-    );
+    const middlewares = createLoggerMiddlewares(pinoHttp || {});
 
     if (exclude) {
+      const safeExcludes = exclude.filter(
+        (e): e is string | { path: string; method: RequestMethod } =>
+          typeof e === 'string' || ('path' in e && 'method' in e),
+      );
+
       consumer
         .apply(...middlewares)
-        .exclude(...exclude)
+        .exclude(...safeExcludes)
         .forRoutes(...forRoutes);
     } else {
       consumer.apply(...middlewares).forRoutes(...forRoutes);
@@ -101,47 +93,13 @@ export class LoggerModule implements NestModule {
   }
 }
 
-function createLoggerMiddlewares(
-  params: NonNullable<Params['pinoHttp']>,
-  useExisting = false,
-  assignResponse = false,
-) {
-  if (useExisting) {
-    return [bindLoggerMiddlewareFactory(useExisting, assignResponse)];
-  }
-
+function createLoggerMiddlewares(params: NonNullable<Params['pinoHttp']>) {
   const middleware = pinoHttp(
     ...(Array.isArray(params) ? params : [params as any]),
   );
 
-  // @ts-expect-error: root is readonly field, but this is the place where
-  // it's set actually
+  // @ts-expect-error: root is readonly field, but this is the place where it's set actually
   PinoLogger.root = middleware.logger;
 
-  // FIXME: params type here is pinoHttp.Options | pino.DestinationStream
-  // pinoHttp has two overloads, each of them takes those types
-  return [middleware, bindLoggerMiddlewareFactory(useExisting, assignResponse)];
-}
-
-function bindLoggerMiddlewareFactory(
-  useExisting: boolean,
-  assignResponse: boolean,
-) {
-  return function bindLoggerMiddleware(
-    req: IncomingMessage,
-    res: ServerResponse,
-    next: () => void,
-  ) {
-    let log = req.log;
-    let resLog = assignResponse ? res.log : undefined;
-
-    if (!useExisting && req.allLogs) {
-      log = req.allLogs[req.allLogs.length - 1]!;
-    }
-    if (assignResponse && !useExisting && res.allLogs) {
-      resLog = res.allLogs[res.allLogs.length - 1]!;
-    }
-
-    storage.run(new Store(log, resLog), next);
-  };
+  return [middleware]; // Removed bindLoggerMiddlewareFactory to avoid CLS context conflict
 }
