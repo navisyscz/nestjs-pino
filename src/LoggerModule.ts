@@ -20,17 +20,12 @@ import {
 } from './params';
 import { PinoLogger } from './PinoLogger';
 
-/**
- * As NestJS@11 still supports express@4 `*`-style routing by itself let's keep
- * it for the backward compatibility. On the next major NestJS release `*` we
- * can replace it with `/{*splat}`, and drop the support for NestJS@9 and below.
- */
 const DEFAULT_ROUTES = [{ path: '*', method: RequestMethod.ALL }];
 
 @Global()
 @Module({ providers: [Logger], exports: [Logger] })
 export class LoggerModule implements NestModule {
-  static forRoot(params?: Params | undefined): DynamicModule {
+  static forRoot(params?: Params): DynamicModule {
     const paramsProvider: Provider<Params> = {
       provide: PARAMS_PROVIDER_TOKEN,
       useValue: params || {},
@@ -94,12 +89,18 @@ export class LoggerModule implements NestModule {
 }
 
 function createLoggerMiddlewares(params: NonNullable<Params['pinoHttp']>) {
-  const middleware = pinoHttp(
-    ...(Array.isArray(params) ? params : [params as any]),
+  const normalized = Array.isArray(params) ? params : [params];
+
+  console.clear();
+  console.log(
+    '🧪 Normalized pinoHttp params:',
+    JSON.stringify(normalized, null, 2),
   );
+
+  const middleware = pinoHttp(...(normalized as [any]));
 
   // @ts-expect-error: root is readonly field, but this is the place where it's set actually
   PinoLogger.root = middleware.logger;
 
-  return [middleware]; // Removed bindLoggerMiddlewareFactory to avoid CLS context conflict
+  return [middleware];
 }
